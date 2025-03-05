@@ -1,0 +1,87 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: CloudFormation template for the Serverless Audio Processing Pipeline
+
+Resources:
+  AudioProcessingFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: lambda_function.lambda_handler
+      Runtime: python3.9
+      CodeUri: ../lambda_function/
+      Layers:
+        - !Ref LibrosaLayer  # Reference the Librosa Layer
+      MemorySize: 512  # Adjust as needed
+      Timeout: 300      # Adjust as needed (max is 900 seconds)
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref AudioProcessingTable
+      Policies:
+        - AmazonS3FullAccess      # For accessing S3
+        - AmazonTranscribeFullAccess  # For using Amazon Transcribe
+        - AmazonComprehendFullAccess # For using Amazon Comprehend
+        - DynamoDBFullAccess       # For writing to DynamoDB
+      Events:
+        S3Event:
+          Type: S3
+          Properties:
+            Bucket: !Ref S3Bucket
+            Events: s3:ObjectCreated:*  # Trigger on object creation
+            Filter:
+              S3Key:
+                Rules:
+                - Name: suffix
+                  Value: .mp3 #Trigger only for MP3 files
+
+  LibrosaLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+        LayerName: librosa-layer
+        Description: "Librosa and dependencies"
+        Content:
+          S3Bucket: !Ref S3Bucket   #Use the S3Bucket to fetch the layer
+          S3Key: librosa_layer.zip #The name of the zip file created
+        CompatibleRuntimes:
+          - python3.9
+
+  AudioProcessingTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: AudioProcessingResults
+      AttributeDefinitions:
+        - AttributeName: audio_file_key
+          AttributeType: S
+      KeySchema:
+        - AttributeName: audio_file_key
+          KeyType: HASH
+      ProvisionedThroughput:
+        ReadCapacityUnits: 5
+        WriteCapacityUnits: 5
+
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "your-unique-bucket-name-${AWS::AccountId}-${AWS::Region}"
+      # Add bucket configurations (versioning, access control, etc.) if needed
+      NotificationConfiguration:
+        LambdaConfigurations:
+          - Event: 's3:ObjectCreated:*'
+            Function: !GetAtt AudioProcessingFunction.Arn
+            Filter:
+              S3Key:
+                Rules:
+                  - Name: suffix
+                    Value: .mp3
+
+Outputs:
+    LambdaFunctionArn:
+      Description: "ARN of the Lambda Function"
+      Value: !GetAtt AudioProcessingFunction.Arn
+
+    DynamoDBTableName:
+      Description: "Name of the DynamoDB Table"
+      Value: !Ref AudioProcessingTable
+
+    S3BucketName:
+      Description: "Name of the S3 Bucket"
+      Value: !Ref S3Bucket
